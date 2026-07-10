@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const checkinController_1 = require("../controllers/checkinController");
+const validateRequest_1 = require("../middleware/validateRequest");
+const checkinValidator_1 = require("../validators/checkinValidator");
+const router = (0, express_1.Router)();
+router.post('/lookup', (0, validateRequest_1.validateRequest)(checkinValidator_1.lookupValidator), checkinController_1.checkinController.lookup);
+router.post('/', (0, validateRequest_1.validateRequest)(checkinValidator_1.createCheckinValidator), checkinController_1.checkinController.create);
+exports.default = router;
