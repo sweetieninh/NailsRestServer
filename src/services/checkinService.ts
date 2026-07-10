@@ -1,6 +1,17 @@
 import { CheckInModel } from '../models/CheckIn';
 import { CustomerModel } from '../models/Customer';
+import mongoose from 'mongoose';
 import { generateReadableId } from '../utils/idGenerator';
+
+const normalizeDigits = (value: string): string => value.replace(/\D/g, '');
+
+const startAndEndOfToday = () => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+};
 
 export const checkinService = {
   lookupCustomer: async (input: { businessId: string; storeId: string; phone: string }) => {
@@ -14,36 +25,88 @@ export const checkinService = {
       return { customerExists: false };
     }
 
+    const resolvedCustomerId = (customer as any).customerId || String((customer as any)._id || '');
+    const latestCheckin = await CheckInModel.findOne({
+      businessId: input.businessId,
+      storeId: input.storeId,
+      $or: [
+        { customerId: resolvedCustomerId },
+        { phone: input.phone },
+      ],
+    })
+      .sort({ checkedInAt: -1 })
+      .lean();
+
     return {
       customerExists: true,
-      customer,
+      lastCheckinAt: latestCheckin?.checkedInAt || new Date(),
+      customer: {
+        ...customer,
+        customerId: resolvedCustomerId,
+      },
     };
   },
 
-  createCheckin: async (input: { businessId: string; storeId: string; customerId: string; phone: string }) => {
-    const customer = await CustomerModel.findOne({
+  createCheckin: async (input: { businessId: string; storeId: string; customerId: string; phone?: string }) => {
+    if (!input.customerId) {
+      throw new Error('Customer ID is required');
+    }
+
+    if (!mongoose.connection.db) {
+      throw new Error('Database is not connected');
+    }
+
+    const customersCollection = mongoose.connection.db.collection<any>('customers');
+
+    const customer = await customersCollection.findOne({
       businessId: input.businessId,
-      storeId: input.storeId,
-      customerId: input.customerId,
+      $and: [
+        {
+          $or: [
+            { storeId: input.storeId },
+            { primaryStoreId: input.storeId },
+          ],
+        },
+        {
+          $or: [
+            { customerId: input.customerId },
+            { _id: input.customerId },
+          ],
+        },
+      ],
     });
 
     if (!customer) {
       throw new Error('Customer not found');
     }
 
+    const resolvedCustomerId = String((customer as any).customerId || (customer as any)._id || input.customerId);
+    const resolvedPhone = input.phone && input.phone.trim() ? input.phone : String((customer as any).phone || '');
+    const checkinTimestamp = new Date();
+
     const checkinId = generateReadableId('checkin');
     const checkin = await CheckInModel.create({
       checkinId,
       businessId: input.businessId,
       storeId: input.storeId,
-      customerId: input.customerId,
-      phone: input.phone,
-      checkedInAt: new Date(),
+      customerId: resolvedCustomerId,
+      phone: resolvedPhone,
+      checkedInAt: checkinTimestamp,
     });
 
-    customer.statistics.lastVisit = new Date();
-    customer.statistics.totalVisits = (customer.statistics.totalVisits || 0) + 1;
-    await customer.save();
+    await customersCollection.updateOne(
+      {
+        businessId: input.businessId,
+        $or: [
+          { _id: (customer as any)._id },
+          { customerId: resolvedCustomerId },
+        ],
+      },
+      {
+        $set: { 'statistics.lastVisit': checkinTimestamp },
+        $inc: { 'statistics.totalVisits': 1 },
+      }
+    );
 
     return {
       message: 'Check-in created successfully',
@@ -51,5 +114,91 @@ export const checkinService = {
       customer,
       checkin,
     };
+  },
+
+  authenticateStaff: async (input: { businessId: string; storeId: string; phone: string; pin: string }) => {
+    if (!mongoose.connection.db) {
+      throw new Error('Database is not connected');
+    }
+
+    const employeesCollection = mongoose.connection.db.collection('employees');
+    const normalizedPhone = normalizeDigits(input.phone);
+
+    const employeeCandidates = await employeesCollection
+      .find({
+      businessId: input.businessId,
+      storeId: input.storeId,
+      passcode: input.pin,
+      })
+      .toArray();
+
+    const employee = employeeCandidates.find((candidate) => normalizeDigits(String(candidate.phone ?? '')) === normalizedPhone);
+
+    if (!employee) {
+      return { valid: false };
+    }
+
+    return {
+      valid: true,
+      employee: {
+        id: String(employee._id ?? ''),
+        firstName: String(employee.firstName ?? ''),
+        lastName: String(employee.lastName ?? ''),
+      },
+    };
+  },
+
+  getTodayCheckedInCustomers: async (input: { businessId: string; storeId: string }) => {
+    if (!mongoose.connection.db) {
+      throw new Error('Database is not connected');
+    }
+
+    const { start, end } = startAndEndOfToday();
+    const checkins = await CheckInModel.find({
+      businessId: input.businessId,
+      storeId: input.storeId,
+      checkedInAt: { $gte: start, $lt: end },
+    })
+      .sort({ checkedInAt: -1 })
+      .lean();
+
+    if (!checkins.length) {
+      return { customers: [] };
+    }
+
+    const customerIds = checkins.map((item) => item.customerId);
+    const customersCollection = mongoose.connection.db.collection<any>('customers');
+    const customers = await customersCollection
+      .find({
+      businessId: input.businessId,
+      $or: [{ customerId: { $in: customerIds } }, { _id: { $in: customerIds } }],
+      })
+      .toArray();
+
+    const customerById = new Map<string, any>();
+    customers.forEach((item) => {
+      if (item.customerId) {
+        customerById.set(String(item.customerId), item);
+      }
+
+      if ((item as any)._id) {
+        customerById.set(String((item as any)._id), item);
+      }
+    });
+
+    const list = checkins.map((checkin) => {
+      const customer = customerById.get(String(checkin.customerId));
+
+      return {
+        checkinId: checkin.checkinId,
+        checkedInAt: checkin.checkedInAt,
+        customerId: checkin.customerId,
+        firstName: customer?.firstName || 'Unknown',
+        lastName: customer?.lastName || '',
+        phone: customer?.phone || checkin.phone,
+      };
+    });
+
+    return { customers: list };
   },
 };

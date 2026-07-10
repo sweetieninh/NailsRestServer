@@ -26,17 +26,17 @@ A production-style Node.js + TypeScript REST API for a nail salon CRM/check-in s
 
 ## Sample curl commands
 ```bash
-curl http://localhost:4010/api/health
+curl http://localhost:4020/api/health
 
-curl -X POST http://localhost:4010/api/checkin/lookup \
+curl -X POST http://localhost:4020/api/checkin/lookup \
   -H "Content-Type: application/json" \
   -d '{"businessId":"biz001","storeId":"store001","phone":"5551234567"}'
 
-curl -X POST http://localhost:4010/api/checkin \
+curl -X POST http://localhost:4020/api/checkin \
   -H "Content-Type: application/json" \
   -d '{"businessId":"biz001","storeId":"store001","customerId":"cust001","phone":"5551234567"}'
 
-curl -X POST http://localhost:4010/api/customers/register \
+curl -X POST http://localhost:4020/api/customers/register \
   -H "Content-Type: application/json" \
   -d '{"businessId":"biz001","storeId":"store001","firstName":"Sally","lastName":"Smith","phone":"5551234567","email":"sally@example.com","birthday":"1990-05-12","allowSMS":true,"allowEmail":false}'
 ```
