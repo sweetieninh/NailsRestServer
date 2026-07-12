@@ -7,4 +7,6 @@ const checkinValidator_1 = require("../validators/checkinValidator");
 const router = (0, express_1.Router)();
 router.post('/lookup', (0, validateRequest_1.validateRequest)(checkinValidator_1.lookupValidator), checkinController_1.checkinController.lookup);
 router.post('/', (0, validateRequest_1.validateRequest)(checkinValidator_1.createCheckinValidator), checkinController_1.checkinController.create);
+router.post('/staff/auth', (0, validateRequest_1.validateRequest)(checkinValidator_1.staffAuthValidator), checkinController_1.checkinController.staffAuth);
+router.get('/today', checkinController_1.checkinController.todayCheckins);
 exports.default = router;

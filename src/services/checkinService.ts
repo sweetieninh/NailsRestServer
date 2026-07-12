@@ -57,6 +57,17 @@ export const checkinService = {
     }
 
     const customersCollection = mongoose.connection.db.collection<any>('customers');
+    const objectIdCandidate = mongoose.Types.ObjectId.isValid(input.customerId)
+      ? new mongoose.Types.ObjectId(input.customerId)
+      : null;
+
+    const customerIdFilters: Array<Record<string, unknown>> = [
+      { customerId: input.customerId },
+      { _id: input.customerId },
+    ];
+    if (objectIdCandidate) {
+      customerIdFilters.push({ _id: objectIdCandidate });
+    }
 
     const customer = await customersCollection.findOne({
       businessId: input.businessId,
@@ -68,10 +79,7 @@ export const checkinService = {
           ],
         },
         {
-          $or: [
-            { customerId: input.customerId },
-            { _id: input.customerId },
-          ],
+          $or: customerIdFilters,
         },
       ],
     });
@@ -98,8 +106,8 @@ export const checkinService = {
       {
         businessId: input.businessId,
         $or: [
-          { _id: (customer as any)._id },
           { customerId: resolvedCustomerId },
+          { _id: (customer as any)._id },
         ],
       },
       {
@@ -186,7 +194,15 @@ export const checkinService = {
       }
     });
 
-    const list = checkins.map((checkin) => {
+    const latestByCustomer = new Map<string, (typeof checkins)[number]>();
+    checkins.forEach((checkin) => {
+      const key = String(checkin.customerId || checkin.phone || '');
+      if (!latestByCustomer.has(key)) {
+        latestByCustomer.set(key, checkin);
+      }
+    });
+
+    const list = Array.from(latestByCustomer.values()).map((checkin) => {
       const customer = customerById.get(String(checkin.customerId));
 
       return {
