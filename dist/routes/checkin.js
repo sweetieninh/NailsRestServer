@@ -9,4 +9,7 @@ router.post('/lookup', (0, validateRequest_1.validateRequest)(checkinValidator_1
 router.post('/', (0, validateRequest_1.validateRequest)(checkinValidator_1.createCheckinValidator), checkinController_1.checkinController.create);
 router.post('/staff/auth', (0, validateRequest_1.validateRequest)(checkinValidator_1.staffAuthValidator), checkinController_1.checkinController.staffAuth);
 router.get('/today', checkinController_1.checkinController.todayCheckins);
+router.get('/technicians', checkinController_1.checkinController.technicians);
+router.get('/inventory', checkinController_1.checkinController.inventory);
+router.get('/service-types', checkinController_1.checkinController.serviceTypes);
 exports.default = router;

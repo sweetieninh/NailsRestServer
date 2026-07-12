@@ -188,4 +188,66 @@ exports.checkinService = {
         });
         return { customers: list };
     },
+    getTechniciansByStore: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const techniciansCollection = mongoose_1.default.connection.db.collection('technicians');
+        const technicians = await techniciansCollection
+            .find({
+            businessId: input.businessId,
+            storeId: input.storeId,
+        })
+            .sort({ firstName: 1, lastName: 1 })
+            .toArray();
+        return {
+            technicians: technicians.map((item) => ({
+                id: String(item.technicianId || item._id || ''),
+                firstName: String(item.firstName || ''),
+                lastName: String(item.lastName || ''),
+            })),
+        };
+    },
+    getInventoryByStore: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const inventoryCollection = mongoose_1.default.connection.db.collection('inventory');
+        const inventory = await inventoryCollection
+            .find({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            active: true,
+        })
+            .sort({ category: 1, itemName: 1 })
+            .toArray();
+        return {
+            items: inventory.map((item) => ({
+                id: String(item.inventoryId || item._id || ''),
+                category: String(item.category || 'Other'),
+                itemName: String(item.itemName || ''),
+                unitCost: Number(item.unitCost || 0),
+            })),
+        };
+    },
+    getServiceTypesByStore: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const serviceTypeCollection = mongoose_1.default.connection.db.collection('serviceType');
+        const serviceTypes = await serviceTypeCollection
+            .find({
+            businessId: input.businessId,
+            storeId: input.storeId,
+        })
+            .sort({ serviceType: 1 })
+            .toArray();
+        return {
+            services: serviceTypes.map((item) => ({
+                id: String(item.serviceTypeId || item._id || item.serviceType || ''),
+                serviceType: String(item.serviceType || ''),
+                price: Number(item.price || 0),
+            })),
+        };
+    },
 };

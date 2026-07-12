@@ -53,4 +53,58 @@ exports.checkinController = {
             next(error);
         }
     },
+    technicians: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const input = parsed.data;
+            const result = await checkinService_1.checkinService.getTechniciansByStore(input);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    inventory: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const input = parsed.data;
+            const result = await checkinService_1.checkinService.getInventoryByStore(input);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    serviceTypes: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const input = parsed.data;
+            const result = await checkinService_1.checkinService.getServiceTypesByStore(input);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
 };
