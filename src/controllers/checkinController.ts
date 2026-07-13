@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { checkinService } from '../services/checkinService';
-import { todayCheckinsValidator } from '../validators/checkinValidator';
+import {
+  cartQueryValidator,
+  storeReportValidator,
+  todayCheckinsValidator,
+} from '../validators/checkinValidator';
 
 export const checkinController = {
   lookup: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -27,6 +31,21 @@ export const checkinController = {
 
       if (!result.valid) {
         res.status(401).json({ message: 'Invalid phone or PIN' });
+        return;
+      }
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  managerAuth: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await checkinService.authenticateManager(req.body);
+
+      if (!result.valid) {
+        res.status(401).json({ message: 'Invalid manager phone or PIN' });
         return;
       }
 
@@ -106,6 +125,60 @@ export const checkinController = {
 
       const input = parsed.data;
       const result = await checkinService.getServiceTypesByStore(input);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  getCart: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const parsed = cartQueryValidator.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({
+          message: 'Validation failed',
+          errors: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const result = await checkinService.getActiveCustomerCart(parsed.data);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  saveCart: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await checkinService.saveCustomerCart(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  checkout: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await checkinService.checkoutCustomerCart(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  storeReport: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const parsed = storeReportValidator.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({
+          message: 'Validation failed',
+          errors: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const result = await checkinService.getStoreReport(parsed.data);
       res.status(200).json(result);
     } catch (error) {
       next(error);

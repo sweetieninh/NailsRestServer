@@ -16,6 +16,28 @@ const startAndEndOfToday = () => {
     end.setDate(end.getDate() + 1);
     return { start, end };
 };
+const startOfWeekMonday = (source) => {
+    const date = new Date(source);
+    const day = date.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    date.setDate(date.getDate() + diff);
+    date.setHours(0, 0, 0, 0);
+    return date;
+};
+const startOfMonth = (source) => {
+    const date = new Date(source.getFullYear(), source.getMonth(), 1);
+    date.setHours(0, 0, 0, 0);
+    return date;
+};
+const parseDateOnly = (value) => {
+    const parsed = new Date(`${value}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const nextDay = (source) => {
+    const date = new Date(source);
+    date.setDate(date.getDate() + 1);
+    return date;
+};
 exports.checkinService = {
     lookupCustomer: async (input) => {
         const customer = await Customer_1.CustomerModel.findOne({
@@ -136,6 +158,32 @@ exports.checkinService = {
             },
         };
     },
+    authenticateManager: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const employeesCollection = mongoose_1.default.connection.db.collection('employees');
+        const normalizedPhone = normalizeDigits(input.phone);
+        const managerCandidates = await employeesCollection
+            .find({
+            businessId: input.businessId,
+            managerOfStoreId: input.storeId,
+            passcode: input.pin,
+        })
+            .toArray();
+        const manager = managerCandidates.find((candidate) => normalizeDigits(String(candidate.phone ?? '')) === normalizedPhone);
+        if (!manager) {
+            return { valid: false };
+        }
+        return {
+            valid: true,
+            employee: {
+                id: String(manager._id ?? ''),
+                firstName: String(manager.firstName ?? ''),
+                lastName: String(manager.lastName ?? ''),
+            },
+        };
+    },
     getTodayCheckedInCustomers: async (input) => {
         if (!mongoose_1.default.connection.db) {
             throw new Error('Database is not connected');
@@ -248,6 +296,206 @@ exports.checkinService = {
                 serviceType: String(item.serviceType || ''),
                 price: Number(item.price || 0),
             })),
+        };
+    },
+    getActiveCustomerCart: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const cartCollection = mongoose_1.default.connection.db.collection('customerCart');
+        const cart = await cartCollection.findOne({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            customerId: input.customerId,
+            status: 'ACTIVE',
+        });
+        return { cart: cart || null };
+    },
+    saveCustomerCart: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const cartCollection = mongoose_1.default.connection.db.collection('customerCart');
+        const timestamp = new Date();
+        const update = {
+            $set: {
+                businessId: input.businessId,
+                storeId: input.storeId,
+                customerId: input.customerId,
+                customerSnapshot: {
+                    firstName: input.customerFirstName || '',
+                    lastName: input.customerLastName || '',
+                },
+                technicianId: input.technicianId || '',
+                services: input.services,
+                inventoryItems: input.inventoryItems,
+                pricing: input.pricing,
+                currency: input.currency || 'USD',
+                status: 'ACTIVE',
+                updatedAt: timestamp,
+            },
+            $setOnInsert: {
+                cartId: (0, idGenerator_1.generateReadableId)('cart'),
+                createdAt: timestamp,
+            },
+        };
+        await cartCollection.findOneAndUpdate({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            customerId: input.customerId,
+            status: 'ACTIVE',
+        }, update, { upsert: true, returnDocument: 'after' });
+        const cart = await cartCollection.findOne({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            customerId: input.customerId,
+            status: 'ACTIVE',
+        });
+        return {
+            message: 'Cart saved successfully',
+            cart,
+        };
+    },
+    checkoutCustomerCart: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const cartCollection = mongoose_1.default.connection.db.collection('customerCart');
+        const orderCollection = mongoose_1.default.connection.db.collection('customerOrder');
+        const timestamp = new Date();
+        const cart = await cartCollection.findOne({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            customerId: input.customerId,
+            status: 'ACTIVE',
+        });
+        if (!cart) {
+            throw new Error('Active cart not found');
+        }
+        const order = {
+            orderId: (0, idGenerator_1.generateReadableId)('order'),
+            cartId: String(cart.cartId || ''),
+            businessId: input.businessId,
+            storeId: input.storeId,
+            customerId: input.customerId,
+            customerSnapshot: cart.customerSnapshot || {},
+            technicianId: cart.technicianId || '',
+            services: cart.services || [],
+            inventoryItems: cart.inventoryItems || [],
+            pricing: cart.pricing || { subtotal: 0, total: 0 },
+            currency: cart.currency || 'USD',
+            payment: {
+                status: 'PAID',
+                paidAt: timestamp,
+            },
+            status: 'COMPLETED',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        await orderCollection.insertOne(order);
+        await cartCollection.updateOne({ _id: cart._id }, {
+            $set: {
+                status: 'CHECKED_OUT',
+                orderId: order.orderId,
+                checkedOutAt: timestamp,
+                updatedAt: timestamp,
+            },
+        });
+        return {
+            message: 'Checkout completed successfully',
+            order,
+        };
+    },
+    getStoreReport: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const now = new Date();
+        let rangeStart;
+        let rangeEndExclusive;
+        if (input.reportType === 'today') {
+            const { start, end } = startAndEndOfToday();
+            rangeStart = start;
+            rangeEndExclusive = end;
+        }
+        else if (input.reportType === 'week') {
+            rangeStart = startOfWeekMonday(now);
+            const weekEnd = new Date(rangeStart);
+            weekEnd.setDate(weekEnd.getDate() + 7);
+            rangeEndExclusive = weekEnd;
+        }
+        else if (input.reportType === 'month') {
+            rangeStart = startOfMonth(now);
+            const endOfTodayExclusive = nextDay(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+            rangeEndExclusive = endOfTodayExclusive;
+        }
+        else {
+            const parsedStart = input.startDate ? parseDateOnly(input.startDate) : null;
+            const parsedEnd = input.endDate ? parseDateOnly(input.endDate) : null;
+            if (!parsedStart || !parsedEnd) {
+                throw new Error('Invalid custom date range');
+            }
+            rangeStart = parsedStart;
+            rangeEndExclusive = nextDay(parsedEnd);
+        }
+        const orderCollection = mongoose_1.default.connection.db.collection('customerOrder');
+        const orders = await orderCollection
+            .find({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            status: 'COMPLETED',
+            'payment.status': 'PAID',
+            createdAt: { $gte: rangeStart, $lt: rangeEndExclusive },
+        })
+            .toArray();
+        const totalAmount = orders.reduce((sum, order) => sum + Number(order?.pricing?.total || 0), 0);
+        let technicianBreakdown = [];
+        if (input.showDetails) {
+            const subtotalByTech = new Map();
+            orders.forEach((order) => {
+                const techId = String(order.technicianId || '');
+                if (!techId) {
+                    return;
+                }
+                const current = subtotalByTech.get(techId) || 0;
+                subtotalByTech.set(techId, current + Number(order?.pricing?.total || 0));
+            });
+            const techIds = Array.from(subtotalByTech.keys());
+            const techniciansCollection = mongoose_1.default.connection.db.collection('technicians');
+            const technicians = await techniciansCollection
+                .find({
+                businessId: input.businessId,
+                storeId: input.storeId,
+                $or: [{ technicianId: { $in: techIds } }, { _id: { $in: techIds } }],
+            })
+                .toArray();
+            const techById = new Map();
+            technicians.forEach((item) => {
+                if (item.technicianId) {
+                    techById.set(String(item.technicianId), item);
+                }
+                if (item._id) {
+                    techById.set(String(item._id), item);
+                }
+            });
+            technicianBreakdown = techIds
+                .map((techId) => {
+                const tech = techById.get(techId);
+                return {
+                    technicianId: techId,
+                    firstName: String(tech?.firstName || 'Unknown'),
+                    lastName: String(tech?.lastName || ''),
+                    subtotal: Number(subtotalByTech.get(techId) || 0),
+                };
+            })
+                .sort((a, b) => b.subtotal - a.subtotal);
+        }
+        return {
+            reportType: input.reportType,
+            from: rangeStart,
+            to: new Date(rangeEndExclusive.getTime() - 1),
+            totalAmount,
+            technicianBreakdown,
         };
     },
 };

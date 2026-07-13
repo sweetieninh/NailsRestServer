@@ -35,6 +35,19 @@ exports.checkinController = {
             next(error);
         }
     },
+    managerAuth: async (req, res, next) => {
+        try {
+            const result = await checkinService_1.checkinService.authenticateManager(req.body);
+            if (!result.valid) {
+                res.status(401).json({ message: 'Invalid manager phone or PIN' });
+                return;
+            }
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
     todayCheckins: async (req, res, next) => {
         try {
             const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
@@ -101,6 +114,58 @@ exports.checkinController = {
             }
             const input = parsed.data;
             const result = await checkinService_1.checkinService.getServiceTypesByStore(input);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    getCart: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.cartQueryValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const result = await checkinService_1.checkinService.getActiveCustomerCart(parsed.data);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    saveCart: async (req, res, next) => {
+        try {
+            const result = await checkinService_1.checkinService.saveCustomerCart(req.body);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    checkout: async (req, res, next) => {
+        try {
+            const result = await checkinService_1.checkinService.checkoutCustomerCart(req.body);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    storeReport: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.storeReportValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const result = await checkinService_1.checkinService.getStoreReport(parsed.data);
             res.status(200).json(result);
         }
         catch (error) {
