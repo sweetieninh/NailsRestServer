@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.storeReportValidator = exports.checkoutValidator = exports.saveCartValidator = exports.cartQueryValidator = exports.todayCheckinsValidator = exports.staffAuthValidator = exports.createCheckinValidator = exports.lookupValidator = void 0;
+exports.technicianReportValidator = exports.storeReportValidator = exports.checkoutValidator = exports.saveCartValidator = exports.cartQueryValidator = exports.todayCheckinsValidator = exports.staffAuthValidator = exports.createCheckinValidator = exports.lookupValidator = void 0;
 const zod_1 = require("zod");
 exports.lookupValidator = zod_1.z.object({
     businessId: zod_1.z.string().min(1),
@@ -65,9 +65,34 @@ exports.storeReportValidator = zod_1.z
     businessId: zod_1.z.string().min(1),
     storeId: zod_1.z.string().min(1),
     reportType: zod_1.z.enum(['today', 'week', 'month', 'custom']),
-    showDetails: zod_1.z
-        .union([zod_1.z.boolean(), zod_1.z.string()])
-        .transform((value) => (typeof value === 'boolean' ? value : value === 'true')),
+    startDate: zod_1.z.string().optional(),
+    endDate: zod_1.z.string().optional(),
+})
+    .superRefine((value, context) => {
+    if (value.reportType !== 'custom') {
+        return;
+    }
+    if (!value.startDate) {
+        context.addIssue({
+            code: zod_1.z.ZodIssueCode.custom,
+            path: ['startDate'],
+            message: 'startDate is required for custom report type',
+        });
+    }
+    if (!value.endDate) {
+        context.addIssue({
+            code: zod_1.z.ZodIssueCode.custom,
+            path: ['endDate'],
+            message: 'endDate is required for custom report type',
+        });
+    }
+});
+exports.technicianReportValidator = zod_1.z
+    .object({
+    businessId: zod_1.z.string().min(1),
+    storeId: zod_1.z.string().min(1),
+    technicianId: zod_1.z.string().min(1),
+    reportType: zod_1.z.enum(['today', 'week', 'month', 'custom']),
     startDate: zod_1.z.string().optional(),
     endDate: zod_1.z.string().optional(),
 })

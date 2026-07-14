@@ -3,6 +3,7 @@ import { checkinService } from '../services/checkinService';
 import {
   cartQueryValidator,
   storeReportValidator,
+  technicianReportValidator,
   todayCheckinsValidator,
 } from '../validators/checkinValidator';
 
@@ -179,6 +180,24 @@ export const checkinController = {
       }
 
       const result = await checkinService.getStoreReport(parsed.data);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  technicianReport: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const parsed = technicianReportValidator.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({
+          message: 'Validation failed',
+          errors: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const result = await checkinService.getTechnicianReport(parsed.data);
       res.status(200).json(result);
     } catch (error) {
       next(error);

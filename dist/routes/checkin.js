@@ -17,4 +17,5 @@ router.get('/cart', checkinController_1.checkinController.getCart);
 router.post('/cart/save', (0, validateRequest_1.validateRequest)(checkinValidator_1.saveCartValidator), checkinController_1.checkinController.saveCart);
 router.post('/checkout', (0, validateRequest_1.validateRequest)(checkinValidator_1.checkoutValidator), checkinController_1.checkinController.checkout);
 router.get('/reports/store', checkinController_1.checkinController.storeReport);
+router.get('/reports/technician', checkinController_1.checkinController.technicianReport);
 exports.default = router;

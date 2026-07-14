@@ -495,7 +495,6 @@ export const checkinService = {
     businessId: string;
     storeId: string;
     reportType: 'today' | 'week' | 'month' | 'custom';
-    showDetails: boolean;
     startDate?: string;
     endDate?: string;
   }) => {
@@ -539,59 +538,224 @@ export const checkinService = {
         'payment.status': 'PAID',
         createdAt: { $gte: rangeStart, $lt: rangeEndExclusive },
       })
+      .sort({ createdAt: -1 })
       .toArray();
 
     const totalAmount = orders.reduce((sum, order) => sum + Number(order?.pricing?.total || 0), 0);
 
-    let technicianBreakdown: Array<{
-      technicianId: string;
-      firstName: string;
-      lastName: string;
+    type TreeNode = {
+      id: string;
+      nodeType: 'today' | 'month' | 'week' | 'day' | 'technician' | 'customer' | 'service';
+      label: string;
       subtotal: number;
-    }> = [];
+      children: TreeNode[];
+    };
 
-    if (input.showDetails) {
-      const subtotalByTech = new Map<string, number>();
+    const techIds = Array.from(
+      new Set(orders.map((order) => String(order.technicianId || '')).filter((value) => value))
+    );
+    const techniciansCollection = mongoose.connection.db.collection<any>('technicians');
+    const technicians = techIds.length
+      ? await techniciansCollection
+          .find({
+            businessId: input.businessId,
+            storeId: input.storeId,
+            $or: [{ technicianId: { $in: techIds } }, { _id: { $in: techIds } }],
+          })
+          .toArray()
+      : [];
+
+    const techById = new Map<string, any>();
+    technicians.forEach((item) => {
+      if (item.technicianId) {
+        techById.set(String(item.technicianId), item);
+      }
+      if (item._id) {
+        techById.set(String(item._id), item);
+      }
+    });
+
+    const formatMonthLabel = (date: Date) =>
+      `Month - ${date.toLocaleString('en-US', { month: 'long', year: 'numeric' })}`;
+    const formatTodayLabel = (date: Date) =>
+      `Today - ${date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+      })}`;
+    const formatDayLabel = (date: Date) =>
+      date.toLocaleDateString('en-US', { weekday: 'long' });
+    const weekOfMonth = (date: Date) => Math.floor((date.getDate() - 1) / 7) + 1;
+
+    const appendOrderDetails = (customerNode: TreeNode, order: any) => {
+      const services = Array.isArray(order.services) ? order.services : [];
+      services.forEach((service: any, index: number) => {
+        const price = Number(service?.unitPrice || 0);
+        customerNode.children.push({
+          id: `service-${String(order.orderId || order._id || 'order')}-${index}`,
+          nodeType: 'service',
+          label: String(service?.serviceType || 'Service'),
+          subtotal: price,
+          children: [],
+        });
+      });
+    };
+
+    const getTechInfo = (order: any) => {
+      const techId = String(order.technicianId || 'unassigned');
+      const tech = techById.get(techId);
+      const firstName = String(order?.technicianSnapshot?.firstName || tech?.firstName || 'Unknown');
+      const lastName = String(order?.technicianSnapshot?.lastName || tech?.lastName || '');
+      return { techId, firstName, lastName };
+    };
+
+    const getCustomerInfo = (order: any) => {
+      const customerId = String(order.customerId || 'unknown-customer');
+      const firstName = String(order?.customerSnapshot?.firstName || 'Customer');
+      const lastName = String(order?.customerSnapshot?.lastName || '');
+      return { customerId, firstName, lastName };
+    };
+
+    const roots: TreeNode[] = [];
+
+    if (input.reportType === 'today') {
+      const rootDate = rangeStart;
+      const todayRoot: TreeNode = {
+        id: `today-${rootDate.toISOString()}`,
+        nodeType: 'today',
+        label: formatTodayLabel(rootDate),
+        subtotal: 0,
+        children: [],
+      };
+      const techMap = new Map<string, TreeNode>();
+
       orders.forEach((order) => {
-        const techId = String(order.technicianId || '');
-        if (!techId) {
+        const orderTotal = Number(order?.pricing?.total || 0);
+        todayRoot.subtotal += orderTotal;
+
+        const { techId, firstName, lastName } = getTechInfo(order);
+        let techNode = techMap.get(techId);
+        if (!techNode) {
+          techNode = {
+            id: `tech-${techId}`,
+            nodeType: 'technician',
+            label: `${firstName} ${lastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          techMap.set(techId, techNode);
+          todayRoot.children.push(techNode);
+        }
+        techNode.subtotal += orderTotal;
+
+        const { customerId, firstName: customerFirstName, lastName: customerLastName } = getCustomerInfo(order);
+        let customerNode = techNode.children.find((node) => node.id === `customer-${customerId}`);
+        if (!customerNode) {
+          customerNode = {
+            id: `customer-${customerId}`,
+            nodeType: 'customer',
+            label: `${customerFirstName} ${customerLastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          techNode.children.push(customerNode);
+        }
+        customerNode.subtotal += orderTotal;
+        appendOrderDetails(customerNode, order);
+      });
+
+      roots.push(todayRoot);
+    } else {
+      const monthMap = new Map<string, { node: TreeNode; weeks: Map<string, { node: TreeNode; days: Map<string, { node: TreeNode; techs: Map<string, TreeNode> }> }> }>();
+
+      orders.forEach((order) => {
+        const createdAt = new Date(order.createdAt);
+        if (Number.isNaN(createdAt.getTime())) {
           return;
         }
-        const current = subtotalByTech.get(techId) || 0;
-        subtotalByTech.set(techId, current + Number(order?.pricing?.total || 0));
-      });
 
-      const techIds = Array.from(subtotalByTech.keys());
-      const techniciansCollection = mongoose.connection.db.collection<any>('technicians');
-      const technicians = await techniciansCollection
-        .find({
-          businessId: input.businessId,
-          storeId: input.storeId,
-          $or: [{ technicianId: { $in: techIds } }, { _id: { $in: techIds } }],
-        })
-        .toArray();
+        const orderTotal = Number(order?.pricing?.total || 0);
+        const monthKey = `${createdAt.getFullYear()}-${createdAt.getMonth() + 1}`;
 
-      const techById = new Map<string, any>();
-      technicians.forEach((item) => {
-        if (item.technicianId) {
-          techById.set(String(item.technicianId), item);
-        }
-        if (item._id) {
-          techById.set(String(item._id), item);
-        }
-      });
-
-      technicianBreakdown = techIds
-        .map((techId) => {
-          const tech = techById.get(techId);
-          return {
-            technicianId: techId,
-            firstName: String(tech?.firstName || 'Unknown'),
-            lastName: String(tech?.lastName || ''),
-            subtotal: Number(subtotalByTech.get(techId) || 0),
+        let monthEntry = monthMap.get(monthKey);
+        if (!monthEntry) {
+          const monthNode: TreeNode = {
+            id: `month-${monthKey}`,
+            nodeType: 'month',
+            label: formatMonthLabel(createdAt),
+            subtotal: 0,
+            children: [],
           };
-        })
-        .sort((a, b) => b.subtotal - a.subtotal);
+          monthEntry = { node: monthNode, weeks: new Map() };
+          monthMap.set(monthKey, monthEntry);
+          roots.push(monthNode);
+        }
+        monthEntry.node.subtotal += orderTotal;
+
+        const weekNumber = weekOfMonth(createdAt);
+        const weekKey = `${monthKey}-week-${weekNumber}`;
+        let weekEntry = monthEntry.weeks.get(weekKey);
+        if (!weekEntry) {
+          const weekNode: TreeNode = {
+            id: `week-${weekKey}`,
+            nodeType: 'week',
+            label: `Week ${weekNumber}`,
+            subtotal: 0,
+            children: [],
+          };
+          weekEntry = { node: weekNode, days: new Map() };
+          monthEntry.weeks.set(weekKey, weekEntry);
+          monthEntry.node.children.push(weekNode);
+        }
+        weekEntry.node.subtotal += orderTotal;
+
+        const dayKey = createdAt.toISOString().slice(0, 10);
+        let dayEntry = weekEntry.days.get(dayKey);
+        if (!dayEntry) {
+          const dayNode: TreeNode = {
+            id: `day-${dayKey}`,
+            nodeType: 'day',
+            label: formatDayLabel(createdAt),
+            subtotal: 0,
+            children: [],
+          };
+          dayEntry = { node: dayNode, techs: new Map() };
+          weekEntry.days.set(dayKey, dayEntry);
+          weekEntry.node.children.push(dayNode);
+        }
+        dayEntry.node.subtotal += orderTotal;
+
+        const { techId, firstName, lastName } = getTechInfo(order);
+        let techNode = dayEntry.techs.get(techId);
+        if (!techNode) {
+          techNode = {
+            id: `tech-${dayKey}-${techId}`,
+            nodeType: 'technician',
+            label: `${firstName} ${lastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          dayEntry.techs.set(techId, techNode);
+          dayEntry.node.children.push(techNode);
+        }
+        techNode.subtotal += orderTotal;
+
+        const { customerId, firstName: customerFirstName, lastName: customerLastName } = getCustomerInfo(order);
+        let customerNode = techNode.children.find((node) => node.id === `customer-${customerId}`);
+        if (!customerNode) {
+          customerNode = {
+            id: `customer-${dayKey}-${customerId}`,
+            nodeType: 'customer',
+            label: `${customerFirstName} ${customerLastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          techNode.children.push(customerNode);
+        }
+        customerNode.subtotal += orderTotal;
+        appendOrderDetails(customerNode, order);
+      });
     }
 
     return {
@@ -599,7 +763,216 @@ export const checkinService = {
       from: rangeStart,
       to: new Date(rangeEndExclusive.getTime() - 1),
       totalAmount,
-      technicianBreakdown,
+      tree: roots,
+    };
+  },
+
+  getTechnicianReport: async (input: {
+    businessId: string;
+    storeId: string;
+    technicianId: string;
+    reportType: 'today' | 'week' | 'month' | 'custom';
+    startDate?: string;
+    endDate?: string;
+  }) => {
+    if (!mongoose.connection.db) {
+      throw new Error('Database is not connected');
+    }
+
+    const now = new Date();
+    let rangeStart: Date;
+    let rangeEndExclusive: Date;
+
+    if (input.reportType === 'today') {
+      const { start, end } = startAndEndOfToday();
+      rangeStart = start;
+      rangeEndExclusive = end;
+    } else if (input.reportType === 'week') {
+      rangeStart = startOfWeekMonday(now);
+      const weekEnd = new Date(rangeStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      rangeEndExclusive = weekEnd;
+    } else if (input.reportType === 'month') {
+      rangeStart = startOfMonth(now);
+      rangeEndExclusive = nextDay(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    } else {
+      const parsedStart = input.startDate ? parseDateOnly(input.startDate) : null;
+      const parsedEnd = input.endDate ? parseDateOnly(input.endDate) : null;
+      if (!parsedStart || !parsedEnd) {
+        throw new Error('Invalid custom date range');
+      }
+      rangeStart = parsedStart;
+      rangeEndExclusive = nextDay(parsedEnd);
+    }
+
+    const orderCollection = mongoose.connection.db.collection<any>('customerOrder');
+    const orders = await orderCollection
+      .find({
+        businessId: input.businessId,
+        storeId: input.storeId,
+        technicianId: input.technicianId,
+        status: 'COMPLETED',
+        'payment.status': 'PAID',
+        createdAt: { $gte: rangeStart, $lt: rangeEndExclusive },
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    type TreeNode = {
+      id: string;
+      nodeType: 'today' | 'month' | 'week' | 'day' | 'technician' | 'customer' | 'service';
+      label: string;
+      subtotal: number;
+      children: TreeNode[];
+    };
+
+    const totalAmount = orders.reduce((sum, order) => sum + Number(order?.pricing?.total || 0), 0);
+    const formatMonthLabel = (date: Date) =>
+      `Month - ${date.toLocaleString('en-US', { month: 'long', year: 'numeric' })}`;
+    const formatTodayLabel = (date: Date) =>
+      `Today - ${date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+      })}`;
+    const formatDayLabel = (date: Date) => date.toLocaleDateString('en-US', { weekday: 'long' });
+    const weekOfMonth = (date: Date) => Math.floor((date.getDate() - 1) / 7) + 1;
+
+    const appendServices = (customerNode: TreeNode, order: any) => {
+      const services = Array.isArray(order.services) ? order.services : [];
+      services.forEach((service: any, index: number) => {
+        const price = Number(service?.unitPrice || 0);
+        customerNode.children.push({
+          id: `service-${String(order.orderId || order._id || 'order')}-${index}`,
+          nodeType: 'service',
+          label: String(service?.serviceType || 'Service'),
+          subtotal: price,
+          children: [],
+        });
+      });
+    };
+
+    const roots: TreeNode[] = [];
+
+    if (input.reportType === 'today') {
+      const todayRoot: TreeNode = {
+        id: `today-${rangeStart.toISOString()}`,
+        nodeType: 'today',
+        label: formatTodayLabel(rangeStart),
+        subtotal: 0,
+        children: [],
+      };
+
+      orders.forEach((order) => {
+        const orderTotal = Number(order?.pricing?.total || 0);
+        todayRoot.subtotal += orderTotal;
+
+        const customerId = String(order.customerId || 'unknown-customer');
+        const firstName = String(order?.customerSnapshot?.firstName || 'Customer');
+        const lastName = String(order?.customerSnapshot?.lastName || '');
+        let customerNode = todayRoot.children.find((node) => node.id === `customer-${customerId}`);
+        if (!customerNode) {
+          customerNode = {
+            id: `customer-${customerId}`,
+            nodeType: 'customer',
+            label: `${firstName} ${lastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          todayRoot.children.push(customerNode);
+        }
+        customerNode.subtotal += orderTotal;
+        appendServices(customerNode, order);
+      });
+
+      roots.push(todayRoot);
+    } else {
+      const monthMap = new Map<
+        string,
+        { node: TreeNode; weeks: Map<string, { node: TreeNode; days: Map<string, TreeNode> }> }
+      >();
+
+      orders.forEach((order) => {
+        const createdAt = new Date(order.createdAt);
+        if (Number.isNaN(createdAt.getTime())) {
+          return;
+        }
+
+        const orderTotal = Number(order?.pricing?.total || 0);
+        const monthKey = `${createdAt.getFullYear()}-${createdAt.getMonth() + 1}`;
+        let monthEntry = monthMap.get(monthKey);
+        if (!monthEntry) {
+          const monthNode: TreeNode = {
+            id: `month-${monthKey}`,
+            nodeType: 'month',
+            label: formatMonthLabel(createdAt),
+            subtotal: 0,
+            children: [],
+          };
+          monthEntry = { node: monthNode, weeks: new Map() };
+          monthMap.set(monthKey, monthEntry);
+          roots.push(monthNode);
+        }
+        monthEntry.node.subtotal += orderTotal;
+
+        const weekNumber = weekOfMonth(createdAt);
+        const weekKey = `${monthKey}-week-${weekNumber}`;
+        let weekEntry = monthEntry.weeks.get(weekKey);
+        if (!weekEntry) {
+          const weekNode: TreeNode = {
+            id: `week-${weekKey}`,
+            nodeType: 'week',
+            label: `Week ${weekNumber}`,
+            subtotal: 0,
+            children: [],
+          };
+          weekEntry = { node: weekNode, days: new Map() };
+          monthEntry.weeks.set(weekKey, weekEntry);
+          monthEntry.node.children.push(weekNode);
+        }
+        weekEntry.node.subtotal += orderTotal;
+
+        const dayKey = createdAt.toISOString().slice(0, 10);
+        let dayNode = weekEntry.days.get(dayKey);
+        if (!dayNode) {
+          dayNode = {
+            id: `day-${dayKey}`,
+            nodeType: 'day',
+            label: formatDayLabel(createdAt),
+            subtotal: 0,
+            children: [],
+          };
+          weekEntry.days.set(dayKey, dayNode);
+          weekEntry.node.children.push(dayNode);
+        }
+        dayNode.subtotal += orderTotal;
+
+        const customerId = String(order.customerId || 'unknown-customer');
+        const firstName = String(order?.customerSnapshot?.firstName || 'Customer');
+        const lastName = String(order?.customerSnapshot?.lastName || '');
+        let customerNode = dayNode.children.find((node) => node.id === `customer-${dayKey}-${customerId}`);
+        if (!customerNode) {
+          customerNode = {
+            id: `customer-${dayKey}-${customerId}`,
+            nodeType: 'customer',
+            label: `${firstName} ${lastName}`.trim(),
+            subtotal: 0,
+            children: [],
+          };
+          dayNode.children.push(customerNode);
+        }
+        customerNode.subtotal += orderTotal;
+        appendServices(customerNode, order);
+      });
+    }
+
+    return {
+      reportType: input.reportType,
+      from: rangeStart,
+      to: new Date(rangeEndExclusive.getTime() - 1),
+      totalAmount,
+      tree: roots,
     };
   },
 };

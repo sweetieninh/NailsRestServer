@@ -23,5 +23,6 @@ router.get('/cart', checkinController.getCart);
 router.post('/cart/save', validateRequest(saveCartValidator), checkinController.saveCart);
 router.post('/checkout', validateRequest(checkoutValidator), checkinController.checkout);
 router.get('/reports/store', checkinController.storeReport);
+router.get('/reports/technician', checkinController.technicianReport);
 
 export default router;

@@ -172,4 +172,21 @@ exports.checkinController = {
             next(error);
         }
     },
+    technicianReport: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.technicianReportValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const result = await checkinService_1.checkinService.getTechnicianReport(parsed.data);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
 };
