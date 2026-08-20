@@ -3,12 +3,32 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkinService = void 0;
+exports.checkinService = exports.matchesCustomerLookup = void 0;
 const CheckIn_1 = require("../models/CheckIn");
 const Customer_1 = require("../models/Customer");
 const mongoose_1 = __importDefault(require("mongoose"));
 const idGenerator_1 = require("../utils/idGenerator");
-const normalizeDigits = (value) => value.replace(/\D/g, '');
+const normalizeDigits = (value) => {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) {
+        return digits.slice(1);
+    }
+    return digits;
+};
+const matchesCustomerLookup = (customer, input) => {
+    if (customer.businessId !== input.businessId) {
+        return false;
+    }
+    const customerStoreId = String(customer.storeId || customer.primaryStoreId || '').trim();
+    const targetStoreId = String(input.storeId || '').trim();
+    if (!customerStoreId || customerStoreId !== targetStoreId) {
+        return false;
+    }
+    const normalizedCustomerPhone = normalizeDigits(String(customer.phone || ''));
+    const normalizedInputPhone = normalizeDigits(String(input.phone || ''));
+    return normalizedCustomerPhone === normalizedInputPhone;
+};
+exports.matchesCustomerLookup = matchesCustomerLookup;
 const startAndEndOfToday = () => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -40,11 +60,12 @@ const nextDay = (source) => {
 };
 exports.checkinService = {
     lookupCustomer: async (input) => {
-        const customer = await Customer_1.CustomerModel.findOne({
+        const normalizedPhone = normalizeDigits(input.phone);
+        const customers = await Customer_1.CustomerModel.find({
             businessId: input.businessId,
             $or: [{ storeId: input.storeId }, { primaryStoreId: input.storeId }],
-            phone: input.phone,
         }).lean();
+        const customer = customers.find((candidate) => (0, exports.matchesCustomerLookup)(candidate, input));
         if (!customer) {
             return { customerExists: false };
         }
@@ -55,6 +76,7 @@ exports.checkinService = {
             $or: [
                 { customerId: resolvedCustomerId },
                 { phone: input.phone },
+                { phone: normalizeDigits(input.phone) },
             ],
         })
             .sort({ checkedInAt: -1 })
@@ -296,6 +318,40 @@ exports.checkinService = {
                 serviceType: String(item.serviceType || ''),
                 price: Number(item.price || 0),
             })),
+        };
+    },
+    getStoresByBusiness: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const storesCollection = mongoose_1.default.connection.db.collection('stores');
+        const stores = await storesCollection
+            .find({ businessId: input.businessId })
+            .sort({ name: 1, storeId: 1 })
+            .toArray();
+        const normalizedMap = new Map();
+        stores.forEach((store, index) => {
+            const rawStoreId = String(store.storeId || '').trim();
+            const rawDocId = String(store._id || '').trim();
+            const resolvedStoreId = rawStoreId || rawDocId || `unknown-store-${index + 1}`;
+            if (normalizedMap.has(resolvedStoreId)) {
+                return;
+            }
+            normalizedMap.set(resolvedStoreId, {
+                storeId: resolvedStoreId,
+                name: String(store.name || store.storeName || resolvedStoreId),
+            });
+        });
+        const normalized = Array.from(normalizedMap.values());
+        if (!normalized.some((store) => store.storeId === input.storeId)) {
+            normalized.unshift({
+                storeId: input.storeId,
+                name: input.storeId,
+            });
+        }
+        return {
+            stores: normalized,
+            currentStoreId: input.storeId,
         };
     },
     getActiveCustomerCart: async (input) => {
@@ -810,6 +866,254 @@ exports.checkinService = {
                 appendServices(customerNode, order);
             });
         }
+        return {
+            reportType: input.reportType,
+            from: rangeStart,
+            to: new Date(rangeEndExclusive.getTime() - 1),
+            totalAmount,
+            tree: roots,
+        };
+    },
+    getOwnersByBusiness: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const storesCollection = mongoose_1.default.connection.db.collection('stores');
+        const ownersCollection = mongoose_1.default.connection.db.collection('owners');
+        const [currentStore, stores, owners] = await Promise.all([
+            storesCollection.findOne({ businessId: input.businessId, storeId: input.storeId }),
+            storesCollection.find({ businessId: input.businessId }).toArray(),
+            ownersCollection.find({ businessId: input.businessId }).toArray(),
+        ]);
+        const ownerList = new Map();
+        owners.forEach((owner) => {
+            const id = String(owner.ownerId || owner._id || '');
+            if (!id) {
+                return;
+            }
+            ownerList.set(id, {
+                id,
+                firstName: String(owner.firstName || owner.ownerFirstName || 'Owner'),
+                lastName: String(owner.lastName || owner.ownerLastName || ''),
+            });
+        });
+        stores.forEach((store) => {
+            const id = String(store.ownerId || '');
+            if (!id || ownerList.has(id)) {
+                return;
+            }
+            ownerList.set(id, {
+                id,
+                firstName: String(store.ownerFirstName || store.ownerName || 'Owner'),
+                lastName: String(store.ownerLastName || ''),
+            });
+        });
+        if (!ownerList.size) {
+            ownerList.set(input.businessId, {
+                id: input.businessId,
+                firstName: 'Business',
+                lastName: 'Owner',
+            });
+        }
+        const currentOwnerId = String(currentStore?.ownerId || Array.from(ownerList.keys())[0]);
+        return {
+            currentOwnerId,
+            owners: Array.from(ownerList.values()),
+        };
+    },
+    getOwnerReport: async (input) => {
+        if (!mongoose_1.default.connection.db) {
+            throw new Error('Database is not connected');
+        }
+        const now = new Date();
+        let rangeStart;
+        let rangeEndExclusive;
+        if (input.reportType === 'today') {
+            const { start, end } = startAndEndOfToday();
+            rangeStart = start;
+            rangeEndExclusive = end;
+        }
+        else if (input.reportType === 'week') {
+            rangeStart = startOfWeekMonday(now);
+            const weekEnd = new Date(rangeStart);
+            weekEnd.setDate(weekEnd.getDate() + 7);
+            rangeEndExclusive = weekEnd;
+        }
+        else if (input.reportType === 'month') {
+            rangeStart = startOfMonth(now);
+            rangeEndExclusive = nextDay(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+        }
+        else {
+            const parsedStart = input.startDate ? parseDateOnly(input.startDate) : null;
+            const parsedEnd = input.endDate ? parseDateOnly(input.endDate) : null;
+            if (!parsedStart || !parsedEnd) {
+                throw new Error('Invalid custom date range');
+            }
+            rangeStart = parsedStart;
+            rangeEndExclusive = nextDay(parsedEnd);
+        }
+        const storesCollection = mongoose_1.default.connection.db.collection('stores');
+        const stores = await storesCollection
+            .find({
+            businessId: input.businessId,
+            $or: [{ ownerId: input.ownerId }, { storeId: input.storeId }],
+        })
+            .toArray();
+        const targetStoreIds = Array.from(new Set(stores.map((store) => String(store.storeId || '')).filter(Boolean)));
+        if (!targetStoreIds.length) {
+            targetStoreIds.push(input.storeId);
+        }
+        const storeNameById = new Map();
+        stores.forEach((store) => {
+            const id = String(store.storeId || '');
+            if (!id) {
+                return;
+            }
+            storeNameById.set(id, String(store.name || store.storeName || id));
+        });
+        const orderCollection = mongoose_1.default.connection.db.collection('customerOrder');
+        const orders = await orderCollection
+            .find({
+            businessId: input.businessId,
+            storeId: { $in: targetStoreIds },
+            status: 'COMPLETED',
+            'payment.status': 'PAID',
+            createdAt: { $gte: rangeStart, $lt: rangeEndExclusive },
+        })
+            .sort({ createdAt: -1 })
+            .toArray();
+        const totalAmount = orders.reduce((sum, order) => sum + Number(order?.pricing?.total || 0), 0);
+        const formatMonthLabel = (date) => `Month - ${date.toLocaleString('en-US', { month: 'long', year: 'numeric' })}`;
+        const formatTodayLabel = (date) => `Today - ${date.toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: '2-digit',
+            day: '2-digit',
+            year: 'numeric',
+        })}`;
+        const formatDayLabel = (date) => date.toLocaleDateString('en-US', { weekday: 'long' });
+        const weekOfMonth = (date) => Math.floor((date.getDate() - 1) / 7) + 1;
+        const appendServices = (customerNode, order) => {
+            const services = Array.isArray(order.services) ? order.services : [];
+            services.forEach((service, index) => {
+                const price = Number(service?.unitPrice || 0);
+                customerNode.children.push({
+                    id: `service-${String(order.orderId || order._id || 'order')}-${index}`,
+                    nodeType: 'service',
+                    label: String(service?.serviceType || 'Service'),
+                    subtotal: price,
+                    children: [],
+                });
+            });
+        };
+        const roots = targetStoreIds.map((storeId) => ({
+            id: `store-${storeId}`,
+            nodeType: 'store',
+            label: `${storeNameById.get(storeId) || storeId} (${storeId})`,
+            subtotal: 0,
+            children: [],
+        }));
+        const rootByStoreId = new Map();
+        roots.forEach((node, index) => rootByStoreId.set(targetStoreIds[index], node));
+        orders.forEach((order) => {
+            const storeId = String(order.storeId || '');
+            const root = rootByStoreId.get(storeId);
+            if (!root) {
+                return;
+            }
+            const createdAt = new Date(order.createdAt);
+            if (Number.isNaN(createdAt.getTime())) {
+                return;
+            }
+            const orderTotal = Number(order?.pricing?.total || 0);
+            root.subtotal += orderTotal;
+            if (input.reportType === 'today') {
+                let todayNode = root.children[0];
+                if (!todayNode) {
+                    todayNode = {
+                        id: `today-${storeId}-${rangeStart.toISOString()}`,
+                        nodeType: 'today',
+                        label: formatTodayLabel(rangeStart),
+                        subtotal: 0,
+                        children: [],
+                    };
+                    root.children.push(todayNode);
+                }
+                todayNode.subtotal += orderTotal;
+                const customerId = String(order.customerId || 'unknown-customer');
+                const firstName = String(order?.customerSnapshot?.firstName || 'Customer');
+                const lastName = String(order?.customerSnapshot?.lastName || '');
+                let customerNode = todayNode.children.find((node) => node.id === `customer-${storeId}-${customerId}`);
+                if (!customerNode) {
+                    customerNode = {
+                        id: `customer-${storeId}-${customerId}`,
+                        nodeType: 'customer',
+                        label: `${firstName} ${lastName}`.trim(),
+                        subtotal: 0,
+                        children: [],
+                    };
+                    todayNode.children.push(customerNode);
+                }
+                customerNode.subtotal += orderTotal;
+                appendServices(customerNode, order);
+                return;
+            }
+            const monthKey = `${createdAt.getFullYear()}-${createdAt.getMonth() + 1}`;
+            let monthNode = root.children.find((node) => node.id === `month-${storeId}-${monthKey}`);
+            if (!monthNode) {
+                monthNode = {
+                    id: `month-${storeId}-${monthKey}`,
+                    nodeType: 'month',
+                    label: formatMonthLabel(createdAt),
+                    subtotal: 0,
+                    children: [],
+                };
+                root.children.push(monthNode);
+            }
+            monthNode.subtotal += orderTotal;
+            const weekNumber = weekOfMonth(createdAt);
+            const weekKey = `${monthKey}-week-${weekNumber}`;
+            let weekNode = monthNode.children.find((node) => node.id === `week-${storeId}-${weekKey}`);
+            if (!weekNode) {
+                weekNode = {
+                    id: `week-${storeId}-${weekKey}`,
+                    nodeType: 'week',
+                    label: `Week ${weekNumber}`,
+                    subtotal: 0,
+                    children: [],
+                };
+                monthNode.children.push(weekNode);
+            }
+            weekNode.subtotal += orderTotal;
+            const dayKey = createdAt.toISOString().slice(0, 10);
+            let dayNode = weekNode.children.find((node) => node.id === `day-${storeId}-${dayKey}`);
+            if (!dayNode) {
+                dayNode = {
+                    id: `day-${storeId}-${dayKey}`,
+                    nodeType: 'day',
+                    label: formatDayLabel(createdAt),
+                    subtotal: 0,
+                    children: [],
+                };
+                weekNode.children.push(dayNode);
+            }
+            dayNode.subtotal += orderTotal;
+            const customerId = String(order.customerId || 'unknown-customer');
+            const firstName = String(order?.customerSnapshot?.firstName || 'Customer');
+            const lastName = String(order?.customerSnapshot?.lastName || '');
+            let customerNode = dayNode.children.find((node) => node.id === `customer-${storeId}-${dayKey}-${customerId}`);
+            if (!customerNode) {
+                customerNode = {
+                    id: `customer-${storeId}-${dayKey}-${customerId}`,
+                    nodeType: 'customer',
+                    label: `${firstName} ${lastName}`.trim(),
+                    subtotal: 0,
+                    children: [],
+                };
+                dayNode.children.push(customerNode);
+            }
+            customerNode.subtotal += orderTotal;
+            appendServices(customerNode, order);
+        });
         return {
             reportType: input.reportType,
             from: rangeStart,

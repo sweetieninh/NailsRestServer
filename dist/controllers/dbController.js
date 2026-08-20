@@ -6,6 +6,7 @@ exports.dbController = {
     getNailsDBCollections: async (_req, res, next) => {
         try {
             const collections = await dbService_1.dbService.getNailsDBCollections();
+            console.log('[debug] NailsDB collections:', collections);
             res.status(200).json({ database: 'NailsDB', collections });
         }
         catch (error) {
@@ -15,6 +16,7 @@ exports.dbController = {
     getNailsDBCollectionSummary: async (_req, res, next) => {
         try {
             const collections = await dbService_1.dbService.getNailsDBCollectionSummary();
+            console.log('[debug] NailsDB collection summary:', collections);
             res.status(200).json({ database: 'NailsDB', collections });
         }
         catch (error) {

@@ -10,6 +10,7 @@ router.post('/', (0, validateRequest_1.validateRequest)(checkinValidator_1.creat
 router.post('/staff/auth', (0, validateRequest_1.validateRequest)(checkinValidator_1.staffAuthValidator), checkinController_1.checkinController.staffAuth);
 router.post('/manager/auth', (0, validateRequest_1.validateRequest)(checkinValidator_1.staffAuthValidator), checkinController_1.checkinController.managerAuth);
 router.get('/today', checkinController_1.checkinController.todayCheckins);
+router.get('/stores', checkinController_1.checkinController.stores);
 router.get('/technicians', checkinController_1.checkinController.technicians);
 router.get('/inventory', checkinController_1.checkinController.inventory);
 router.get('/service-types', checkinController_1.checkinController.serviceTypes);
@@ -18,4 +19,6 @@ router.post('/cart/save', (0, validateRequest_1.validateRequest)(checkinValidato
 router.post('/checkout', (0, validateRequest_1.validateRequest)(checkinValidator_1.checkoutValidator), checkinController_1.checkinController.checkout);
 router.get('/reports/store', checkinController_1.checkinController.storeReport);
 router.get('/reports/technician', checkinController_1.checkinController.technicianReport);
+router.get('/owners', checkinController_1.checkinController.owners);
+router.get('/reports/owner', checkinController_1.checkinController.ownerReport);
 exports.default = router;

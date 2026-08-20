@@ -84,6 +84,24 @@ exports.checkinController = {
             next(error);
         }
     },
+    stores: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const input = parsed.data;
+            const result = await checkinService_1.checkinService.getStoresByBusiness(input);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
     inventory: async (req, res, next) => {
         try {
             const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
@@ -183,6 +201,40 @@ exports.checkinController = {
                 return;
             }
             const result = await checkinService_1.checkinService.getTechnicianReport(parsed.data);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    owners: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.todayCheckinsValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const result = await checkinService_1.checkinService.getOwnersByBusiness(parsed.data);
+            res.status(200).json(result);
+        }
+        catch (error) {
+            next(error);
+        }
+    },
+    ownerReport: async (req, res, next) => {
+        try {
+            const parsed = checkinValidator_1.ownerReportValidator.safeParse(req.query);
+            if (!parsed.success) {
+                res.status(400).json({
+                    message: 'Validation failed',
+                    errors: parsed.error.flatten().fieldErrors,
+                });
+                return;
+            }
+            const result = await checkinService_1.checkinService.getOwnerReport(parsed.data);
             res.status(200).json(result);
         }
         catch (error) {

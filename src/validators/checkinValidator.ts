@@ -127,3 +127,34 @@ export const technicianReportValidator = z
       });
     }
   });
+
+export const ownerReportValidator = z
+  .object({
+    businessId: z.string().min(1),
+    storeId: z.string().min(1),
+    ownerId: z.string().min(1),
+    reportType: z.enum(['today', 'week', 'month', 'custom']),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.reportType !== 'custom') {
+      return;
+    }
+
+    if (!value.startDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['startDate'],
+        message: 'startDate is required for custom report type',
+      });
+    }
+
+    if (!value.endDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endDate'],
+        message: 'endDate is required for custom report type',
+      });
+    }
+  });
